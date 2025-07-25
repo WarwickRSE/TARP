@@ -18,9 +18,15 @@ requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers"
 ]
 license = "Apache-2.0"
 license-files = ["LICEN[CS]E*"]
+
+dependencies =[
+  "requests >= 2.31.0"
+]
 
 [project.urls]
 Homepage = "https://github.com/WarwickRSE/TARP"
