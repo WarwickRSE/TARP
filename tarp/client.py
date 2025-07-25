@@ -62,6 +62,21 @@ class client:
         def probe(self):
             """Check the status of the asynchronous operation."""
             return self.client.probe(self.ID)
+        
+        def waitCycle(self):
+            """Wait for the asynchronous operation to complete, checking status periodically."""
+            pb = self.probe()
+            if pb['status'] == 'in_progress':
+                time.sleep(pb['suggested_wait'])
+                return None
+            elif pb['status'] == 'completed':
+                return self.wait()
+            elif pb['status'] == 'failed':
+                raise Exception(f"Async operation failed with error: {pb.get('error', 'Unknown error')}")
+        
+        def status(self):
+            result = self.probe()
+            return result.get('status', 'unknown')
 
     def __init__(self, server_url, server_key=None):
         self.server_url = server_url.rstrip('/')
@@ -88,7 +103,7 @@ class client:
             else:
                 raise Exception(json_response.get('message', 'Unknown error'))
             
-        #Now check the mime type. If it is not application/json have done all possible error checking, so return the result as binary
+        #Now check the mime type. If it is not application/json have done all possible error checking, so return the result as binary1
         if response.headers.get('Content-Type') != 'application/json':
             return response.headers.get('Content-Type'), response.content
         json = response.json()

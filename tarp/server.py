@@ -92,7 +92,6 @@ class server(BaseHTTPRequestHandler):
     rpc_endpoints = {} # Dictionary to hold RPC endpoints
     asyncRPC_endpoints = {} # Dictionary to hold AsyncRPC endpoints
     futures = {}  # Dictionary to hold futures for async RPC calls
-    executor = concurrent.futures.ProcessPoolExecutor(max_workers=10)  # Shared process pool executor for async RPC calls. Should be replaced with a thread pool if Python ever sorts out the GIL
 
     @classmethod
     def addGetEndpoint(cls, name, callback, result_mimetype=None, description=None, query_params=None):
@@ -177,9 +176,7 @@ class server(BaseHTTPRequestHandler):
             mimetype = mimetype or 'application/octet-stream'
             presult = result
         elif not result:
-            self.send_response(200)
-            self.end_headers()
-            return
+            presult = None
         else:
             #Payload is returned but is unrecognized. Bug so return 500
             self.send_response(500)
@@ -526,5 +523,10 @@ def runServer(cls, secure=False, certfile='snakeoil.pem', keyfile='snakeoil.key'
         print(f'Serving HTTP on port {port}')
     httpd.serve_forever()
 
-def makeServer(name='baseHandler'):
-    return type(name,(server,),{})
+def makeServer(name='baseHandler', multiThreaded=False):
+    sv = type(name,(server,),{})
+    if multiThreaded:
+        sv.executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)  # Use a thread pool executor for multithreaded servers
+    else:
+        sv.executor = concurrent.futures.ProcessPoolExecutor(max_workers=10) # Use a process pool executor for single-threaded, multi process servers
+    return sv
