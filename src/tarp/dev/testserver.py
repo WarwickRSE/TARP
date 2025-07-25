@@ -6,7 +6,7 @@ import tarp.server
 def my_function(x, y):
     return x + y
 
-def server(**argv):
+def server():
 
   if(len(argv) > 1):
     #Assuming port

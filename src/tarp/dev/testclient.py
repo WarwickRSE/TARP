@@ -3,8 +3,6 @@ import re
 
 import tarp.client
 
-
-
 def validate_ip(ip_str):
 
   if ip_str == 'localhost':
@@ -20,7 +18,7 @@ def validate_ip(ip_str):
     print("Warning: you have not chosen 'localhost' nor a valid IP address\n Assuming a hostname, continuing")
 
 
-def client(**argv):
+def client():
 
   if(len(argv) > 1):
     ip_str = argv[1]
