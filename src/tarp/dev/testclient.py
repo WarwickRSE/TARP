@@ -20,7 +20,7 @@ def validate_ip(ip_str):
     print("Warning: you have not chosen 'localhost' nor a valid IP address\n Assuming a hostname, continuing")
 
 
-def client(argv**):
+def client(**argv):
 
   if(len(argv) > 1):
     ip_str = argv[1]
