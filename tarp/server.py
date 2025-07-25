@@ -1,3 +1,16 @@
+#   Copyright 2025 Chris Brady, Heather Ratcliffe
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
 import ssl
 import sys
 import json
@@ -5,6 +18,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
 import time
+import pickle
+import base64
+import concurrent.futures
+import uuid
 
 #Custom exception for "Operation in progress"
 class OperationInProgress(Exception):
@@ -57,26 +74,46 @@ def flatten_qs(qs):
     return {k: v[0] if len(v) == 1 else v for k, v in qs.items()}
     
 def api_success(result,mimetype):
+    """Returns a JSON-encoded success response with the result and mimetype."""
     return json.dumps(encode_bytes_in_map({"status": "success", "mimetype": mimetype, "result": result})).encode('utf-8')
 
 def api_error(message, type="generic"):
+    """Returns a JSON-encoded error response with the message and type of error."""
     return json.dumps({"status": "error", "type":type, "message": message}).encode('utf-8')
 
+#Create a multithreaded HTTP server that can handle multiple requests concurrently
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
 class server(BaseHTTPRequestHandler):
 
-    get_endpoints = {}
-    post_endpoints = {}
+    get_endpoints = {} # Dictionary to hold GET endpoints
+    post_endpoints = {} # Dictionary to hold POST endpoints
+    rpc_endpoints = {} # Dictionary to hold RPC endpoints
+    asyncRPC_endpoints = {} # Dictionary to hold AsyncRPC endpoints
+    futures = {}  # Dictionary to hold futures for async RPC calls
+    executor = concurrent.futures.ProcessPoolExecutor(max_workers=10)  # Shared process pool executor for async RPC calls. Should be replaced with a thread pool if Python ever sorts out the GIL
 
     @classmethod
-    def add_get_endpoint(cls, name, callback, result_mimetype=None, description=None, query_params=None):
+    def addGetEndpoint(cls, name, callback, result_mimetype=None, description=None, query_params=None):
+        """Adds a GET endpoint to the server."""
         cls.get_endpoints[name] = {"func":callback, "mimetype":result_mimetype, "description": description or callback.__doc__ or "No description provided", "query_params":query_params}
 
     @classmethod
-    def add_post_endpoint(cls, name, callback, result_mimetype=None, description=None, query_params=None, payload_mimetype=None, payload_schema=None):
+    def addPostEndpoint(cls, name, callback, result_mimetype=None, description=None, query_params=None, payload_mimetype=None, payload_schema=None):
+        """Adds a POST endpoint to the server."""
         cls.post_endpoints[name] = {"func":callback, "mimetype":result_mimetype, "description": description or callback.__doc__ or "No description provided", "query_params":query_params, "payload_mimetype": payload_mimetype, "payload_schema": payload_schema}
+
+    @classmethod
+    def addRPCEndpoint(cls, name, callback, result_mimetype=None, description=None):
+        """Adds an RPC endpoint to the server."""
+        cls.rpc_endpoints[name] = {"func":callback, "mimetype":result_mimetype, "description": description or callback.__doc__ or "No description provided"}
+
+    @classmethod
+    def addAsyncRPCEndpoint(cls, name, callback, result_mimetype=None, description=None, suggested_wait=5):
+        """Adds an AsyncRPC endpoint to the server."""
+        cls.asyncRPC_endpoints[name] = {"func":callback, "mimetype":result_mimetype, "description": description or callback.__doc__ or "No description provided", "wait": suggested_wait}
+
 
     def get_known_endpoints(self):
         """ Returns a dictionary of known endpoints for both GET and POST methods.
@@ -84,6 +121,8 @@ class server(BaseHTTPRequestHandler):
         endpoints = {}
         endpoints["GET"] = []
         endpoints["POST"] = []
+        endpoints["RPC"] = []
+        endpoints["ASYNCRPC"] = []
         for name, data in self.get_endpoints.items():
             endpoints["GET"].append({
                 "name": name,
@@ -97,6 +136,16 @@ class server(BaseHTTPRequestHandler):
                 "query_params": data['query_params'] or [],
                 "payload_mimetype": data['payload_mimetype'] or None,
                 "payload_schema": data['payload_schema'] or None
+            })
+        for name, data in self.rpc_endpoints.items():
+            endpoints["RPC"].append({
+                "name": name,
+                "description": data['description'] or "No description provided"
+            })
+        for name, data in self.asyncRPC_endpoints.items():
+            endpoints["ASYNCRPC"].append({
+                "name": name,
+                "description": data['description'] or "No description provided"
             })
         return endpoints
     
@@ -173,8 +222,69 @@ class server(BaseHTTPRequestHandler):
         else:
             # If the content type is not recognized, we just return the raw bytes
             return body_data
+        
+    def asyncGet(self):
+        """Gets the result of an asynchronous operation by UUID."""
+        query_params = parse_qs(urlparse(self.path).query)
+        uuid = query_params.get('UUID', [None])[0]
+        if not uuid:
+            self.send_response(400)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(api_error('UUID parameter is required'))
+            return
+        if uuid not in self.futures:
+            self.send_response(404)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(api_error('UUID not found').encode('utf-8'))
+            return
+        future = self.futures[uuid]['future']
+        if future.done():
+            result = future.result()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            result = {'payload': base64.b64encode(pickle.dumps(result)).decode('utf-8')}
+            self.wfile.write(api_success(result, 'application/json'))
+            del self.futures[uuid]
+        else:
+            self.send_response(503)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Retry-After', str(self.futures[uuid]['wait']))
+            self.end_headers()
+            self.wfile.write(api_error("Operation still underway","OperationInProgress"))
+
+    def asyncProbe(self):
+        """Probes the status of an asynchronous operation by UUID."""
+        query_params = parse_qs(urlparse(self.path).query)
+        uuid = query_params.get('UUID', [None])[0]
+        if not uuid:
+            self.send_response(400)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(api_error('UUID parameter is required'))
+            return
+        if uuid not in self.futures:
+            self.send_response(404)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(api_error('UUID not found').encode('utf-8'))
+            return
+        future = self.futures[uuid]['future']
+        if future.done():
+            result = future.result()
+            status = 'completed'
+        else:
+            status = 'in_progress'
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(api_success({'status': status, "suggested_wait":self.futures[uuid]['wait']}, 'application/json'))
 
     def do_GET(self):
+        """Handles GET requests. This function is a core part of the HTTP server and
+        is called whenever a GET request is made to the server."""
         parsed = urlparse(self.path)
         #Firt check if the path is root, if so call the get_endpoints
         if parsed.path == '/':
@@ -183,6 +293,14 @@ class server(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(api_success(self.get_known_endpoints(), 'application/json'))
             return
+        #If the path is /asyncGet or /asyncProbe, handle those special cases
+        if parsed.path == '/asyncGet':
+            self.asyncGet()
+            return
+        if parsed.path == '/asyncProbe':
+            self.asyncProbe()
+            return
+
         # Otherwise, check if the path matches a registered endpoint
         endpoint = parsed.path.lstrip('/')
         if endpoint in self.get_endpoints:
@@ -224,8 +342,14 @@ class server(BaseHTTPRequestHandler):
 
 
     def do_POST(self):
+        """Handles POST requests. This function is a core part of the HTTP server and
+        is called whenever a POST request is made to the server."""
         parsed = urlparse(self.path)
         endpoint = parsed.path.lstrip('/')
+        if endpoint in self.rpc_endpoints:
+            return self.do_RPC()
+        if endpoint in self.asyncRPC_endpoints:
+            return self.do_asyncRPC()
         if endpoint in self.post_endpoints:
             content_length = int(self.headers.get('Content-Length', 0))
             content_type = self.headers.get('Content-Type', None)
@@ -259,11 +383,134 @@ class server(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(api_error('Endpoint not found'))
 
+    def do_RPC(self):
+        """Handles RPC requests. This function is NOT part of the HTTP server and is
+        called from do_POST when the path matches a registered RPC endpoint."""
+        parsed = urlparse(self.path)
+        endpoint = parsed.path.lstrip('/')
+        if endpoint in self.rpc_endpoints:
+            content_length = int(self.headers.get('Content-Length', 0))
+            content_type = self.headers.get('Content-Type', None)
+            body_data = self.rfile.read(content_length) if content_length else None
+            body_data = self.process_body(body_data, content_type)
+            #If there are any query parameters that is an error, #RPC endpoints should not have query parameters
+            if parsed.query:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(api_error('RPC endpoints should not have query parameters'))
+                return
+            #The body_data is a JSON object, with the top level being a dict with two keys: "args" and "kwargs"
+            #If it isn't a dict at this point, it is an error
+            if not isinstance(body_data, dict) or 'args' not in body_data or 'kwargs' not in body_data:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(api_error('RPC body data should be a JSON object with "args" and "kwargs" keys'))
+                return
+            #The args and kwargs are base64 encoded pickles - unpack them
+            args = pickle.loads(base64.b64decode(body_data['args']))
+            kwargs = pickle.loads(base64.b64decode(body_data['kwargs']))
+            if not isinstance(args, tuple):
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(api_error('RPC args should be a tuple'))
+                return
+            if not isinstance(kwargs, dict):
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(api_error('RPC kwargs should be a dict'))
+                return
+            try:
+                result = {"payload":pickle.dumps(self.rpc_endpoints[endpoint]['func'](*args, **kwargs))}
+            except Exception as e:
+                if isinstance(e, OperationInProgress):
+                    self.send_response(503)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Retry-After', str(e.retry_after))
+                    self.end_headers()
+                    self.wfile.write(api_error(str(e)))
+                    return
+                elif isinstance(e, InvalidServerState):
+                    self.send_response(503)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(api_error(str(e)))
+                    return
+                else:
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(api_error(str(e)))
+                    return
+            self.handle_result(result, mimetype=self.rpc_endpoints[endpoint]['mimetype'])
+        else:
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(api_error('Endpoint not found'))
+
+    def do_asyncRPC(self):
+        """Handles AsyncRPC requests. This function is NOT part of the HTTP server and is
+        called from do_POST when the path matches a registered AsyncRPC endpoint."""
+        parsed = urlparse(self.path)
+        endpoint = parsed.path.lstrip('/')
+        if endpoint in self.asyncRPC_endpoints:
+            content_length = int(self.headers.get('Content-Length', 0))
+            content_type = self.headers.get('Content-Type', None)
+            body_data = self.rfile.read(content_length) if content_length else None
+            body_data = self.process_body(body_data, content_type)
+            #If there are any query parameters that is an error, #RPC endpoints should not have query parameters
+            if parsed.query:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(api_error('RPC endpoints should not have query parameters'))
+                return
+            #The body_data is a JSON object, with the top level being a dict with two keys: "args" and "kwargs"
+            #If it isn't a dict at this point, it is an error
+            if not isinstance(body_data, dict) or 'args' not in body_data or 'kwargs' not in body_data:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(api_error('RPC body data should be a JSON object with "args" and "kwargs" keys'))
+                return
+            #The args and kwargs are base64 encoded pickles - unpack them
+            args = pickle.loads(base64.b64decode(body_data['args']))
+            kwargs = pickle.loads(base64.b64decode(body_data['kwargs']))
+            if not isinstance(args, tuple):
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(api_error('RPC args should be a tuple'))
+                return
+            if not isinstance(kwargs, dict):
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(api_error('RPC kwargs should be a dict'))
+                return
+            #Run the async RPC function in a separate thread
+            future = self.executor.submit(self.asyncRPC_endpoints[endpoint]['func'], *args, **kwargs)
+            #Generate a UUID for the async operation
+            ID = str(uuid.uuid4())
+            self.futures[ID]={}
+            self.futures[ID]['future'] = future
+            self.futures[ID]['wait'] = self.asyncRPC_endpoints[endpoint].get('wait', 5)  # Default wait time is 5 seconds if not specified
+            result = {"ID":ID, "suggested_wait": self.futures[ID].get('wait', 5)}
+
+            self.handle_result(result, mimetype=self.asyncRPC_endpoints[endpoint]['mimetype'])
+        else:
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(api_error('Endpoint not found'))
+
 def runServer(cls, secure=False, certfile='snakeoil.pem', keyfile='snakeoil.key', port=None, bindTo=''):
     if secure:
-        port = port or 4430
+        port = port or 443
     else:
-        port = port or 8080
+        port = port or 80
     server_address = (bindTo, port)
     httpd = ThreadedHTTPServer(server_address, cls)
     if secure:
