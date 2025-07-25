@@ -2,6 +2,9 @@
 requires = ["setuptools >= 77.0.3"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+packages = ["tarp", "tarp.example"]
+
 [project]
 name = "tarp"
 version = "0.0.1"
