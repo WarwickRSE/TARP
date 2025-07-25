@@ -34,6 +34,6 @@ Issues = "https://github.com/WarwickRSE/TARP/issues"
 
 
 [project.scripts]
-tarp-server = "tarp:dev.testserver"
-tarp-client = "tarp:dev.testclient"
+tarp-server = "tarp.dev:server"
+tarp-client = "tarp.dev:client"
 

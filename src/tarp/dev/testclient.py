@@ -3,6 +3,8 @@ import re
 
 import tarp.client
 
+
+
 def validate_ip(ip_str):
 
   if ip_str == 'localhost':
@@ -18,27 +20,29 @@ def validate_ip(ip_str):
     print("Warning: you have not chosen 'localhost' nor a valid IP address\n Assuming a hostname, continuing")
 
 
-if(len(argv) > 1):
-  ip_str = argv[1]
-  validate_ip(ip_str)
-else:
-  ip_str = 'localhost'
+def client(argv**):
 
-print("Connecting to "+ip_str)
+  if(len(argv) > 1):
+    ip_str = argv[1]
+    validate_ip(ip_str)
+  else:
+    ip_str = 'localhost'
 
-if(len(argv) > 2):
-  #Assuming port
-  try:
-    port = int(argv[2])
-  except:
-    print("Invalid port specified: " + argv[2]+"\n Falling back to 8080")
+  print("Connecting to "+ip_str)
+
+  if(len(argv) > 2):
+    #Assuming port
+    try:
+      port = int(argv[2])
+    except:
+      print("Invalid port specified: " + argv[2]+"\n Falling back to 8080")
+      port = 8080
+  else:
     port = 8080
-else:
-  port = 8080
 
 
-client = tarp.client.client('http://{}:{}'.format(ip_str,port))
+  client = tarp.client.client('http://{}:{}'.format(ip_str,port))
 
-result = client.my_function(1, 2)
-print("Function returned: {} (expected {})".format(result, 3))  # Output: 3
+  result = client.my_function(1, 2)
+  print("Function returned: {} (expected {})".format(result, 3))  # Output: 3
 
