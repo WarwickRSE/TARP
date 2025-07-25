@@ -1,2 +1,2 @@
-from .testclient import client as testclient
-from .testserver import server as testserver
+from .testclient import client
+from .testserver import server
