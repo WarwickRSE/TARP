@@ -1,6 +1,16 @@
 from sys import argv
+import platform
 
 import tarp.server
+
+def describe_host():
+  vals = {}
+  vals['hostname'] = platform.node()
+  vals['system'] = platform.system()
+  vals['arch'] = platform.machine()
+  vals['proc'] = platform.processor()
+
+  return vals
 
 # The procedure to be called remotely
 def my_function(x, y):
@@ -23,7 +33,14 @@ def server():
 
   #Register the function with the server
   server.addRPCEndpoint('my_function', my_function)
+  server.addRPCEndpoint('describe_host', describe_host)
+
 
   #Start the server
   tarp.server.runServer(server, port=port)
+
+if __name__ == "__main__":
+
+  server()
+
 

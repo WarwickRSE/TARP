@@ -38,9 +38,25 @@ def client():
   else:
     port = 8080
 
+  try:
+    client = tarp.client.client('http://{}:{}'.format(ip_str,port))
+  except Exception as e:
+    print("Connection failed with error: ")
+    print(e)
+    exit()
 
-  client = tarp.client.client('http://{}:{}'.format(ip_str,port))
+
+  server_info = client.describe_host()
+
+  print("Connected to host:")
+  print(server_info)
+
+
 
   result = client.my_function(1, 2)
   print("Function returned: {} (expected {})".format(result, 3))  # Output: 3
+
+if __name__ == "__main__":
+
+  client()
 
