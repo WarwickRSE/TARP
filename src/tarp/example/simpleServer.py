@@ -2,23 +2,15 @@
 
 import tarp.server
 
-  # The procedure to be called remotely
+# The procedure to be called remotely
 def my_function(x, y):
-  return x + y
+    return x + y
 
-def run():
+#Create a TARP server prototype
+server = tarp.server.makeServer()
 
-  #Create a TARP server prototype
-  server = tarp.server.makeServer()
+#Register the function with the server
+server.addRPCEndpoint('my_function', my_function)
 
-  #Register the function with the server
-  server.addRPCEndpoint('my_function', my_function)
-
-  #Start the server
-  tarp.server.runServer(server, port=8080)
-
-if __name__ == "__main__":
-
-  run()
-
-
+#Start the server
+tarp.server.runServer(server, port=8080)
