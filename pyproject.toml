@@ -21,7 +21,7 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers"
 ]
-license = "Apache-2.0"
+license = {text="Apache-2.0"}
 license-files = ["LICENSE"]
 
 dependencies =[
